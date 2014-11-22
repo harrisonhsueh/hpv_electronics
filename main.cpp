@@ -1,27 +1,22 @@
 #include "mbed.h"
 #include <limits.h>
 #include <stdio.h>
-#define NO_SPOKE 0
-#define SPOKE 1
 Serial device(p9, p10); //tx, rx
 DigitalOut xbeeout(p11);
 DigitalOut led1(LED1);
 DigitalOut led2(LED2);
 DigitalOut led3(LED3);
 DigitalOut led4(LED4);
-//DigitalIn light_in(P0_10);
 Serial pc(USBTX, USBRX); // tx, rx
 Serial xbee(p13, p14);
 
 void wheelspeed_interrupt();
-volatile int count = 0;
-int prev_count = 0;
-double speed = 0.0;
-int num_spokes = 24;
+volatile int count = 0; //wheelspeed_interrupt increments this, reset to 0 after send_interval
+double speed = 0.0; //calculated speed
+int num_spokes = 24; //set to number of spokes on wheel, used for calculating speed
 int send_interval = 2; //interval between sending data via XBEE, in seconds
 double circumference = 0.00130239; // in miles for 700x23c wheel w/ tire
 int update_interval = 2000; // in ms
-int last_action = NO_SPOKE;
 
 /* Prints speed to terminal through a usb. */
 void show_usbterm_speed(double speed) {
@@ -34,7 +29,9 @@ void send_xbee_speed(double speed) {
 }
 
 /* Shows the speed using the 4 leds as binary values.
-in format 0b{led4,led3,led2,led1} */
+ * in format 0b{led4,led3,led2,led1}
+ * This is deprecated, but could be useful if no terminal available
+ */
 void show_binary_speed(double speed) {
 	led1 = 0;
 	led2 = 0;
@@ -57,6 +54,8 @@ void show_binary_speed(double speed) {
 		speed -= 1;
 	}
 }
+
+/* Main sending loop. */
 int main() {
 	// convert units before to minimize calculations in critical section
 	double speed_per_spoke = circumference * 3600 * 1000 / update_interval / num_spokes;
@@ -75,7 +74,6 @@ int main() {
 		NVIC_EnableIRQ(UART1_IRQn); //end critical section
 		led1 = 0;
 		led2 = 0;
-		//show_binary_speed(speed);
 		show_usbterm_speed(speed);
 		send_time_left -= 1;
 		if (send_time_left == 0) {
@@ -85,7 +83,9 @@ int main() {
 	}
 }
 
-
+/* Serial interrupt for light sensor
+ * measures number of times light is interrupted by spoke to calculate wheelspeed.
+ */
 
 void wheelspeed_interrupt() {
 	led2 = 1;
