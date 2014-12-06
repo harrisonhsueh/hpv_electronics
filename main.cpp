@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include "Servo.h"
 #include "xbee.h"
+#include "nRF24L01P.h"
 
 Serial spoke_sensor(p9, p10); //tx, rx
 DigitalOut led1(LED1);
@@ -23,7 +24,7 @@ int update_interval = 2000; // in ms
 double speed_per_spoke;
 float pos;
 float new_pos = 0.0;
-char speed_buffer[50];
+char speed_buffer[20];
 char *speed_buffer_val;
 double shift_vals[11];
 
@@ -35,8 +36,8 @@ void show_usbterm_speed(double speed, float pos) {
 
 /* Sends speed to XBEE. */
 void send_xbee_speed(double speed) {
-	sprintf(speed_buffer_val, "%f", speed);
-	xbee.SendData(speed_buffer);
+	sprintf(speed_buffer_val, "%f\n", speed);
+	//xbee.SendData(speed_buffer);
 	//xbee.printf("speed: %f\n", speed);
 	//pc.printf("XBEE SEND\n");
 }
