@@ -8,6 +8,7 @@
 #define RF24_TRANSFER_SIZE 32
 #define XBEE_SEND_INTERVAL 2
 #define PC_SEND_INTERVAL 1
+#define paddr_size 5
 
 //Serial spoke_sensor(p9, p10); //tx, rx
 DigitalOut led1(LED1);
@@ -68,6 +69,11 @@ void rf24_init() {
 	init_sensor(3, "rear_lights", &rear_lights_handler);
 	init_sensor(4, "front_lights", &front_lights_handler);
 	init_sensor(5, "shifter", &shifter_handler);
+	setRxAddress(0x0000000001, paddr_size, NRF24L01P_PIPE_P1);
+	setRxAddress(0x0000000002, paddr_size, NRF24L01P_PIPE_P2);
+	setRxAddress(0x0000000003, paddr_size, NRF24L01P_PIPE_P3);
+	setRxAddress(0x0000000004, paddr_size, NRF24L01P_PIPE_P4);
+	setRxAddress(0x0000000005, paddr_size, NRF24L01P_PIPE_P5);
 	rf_receiver.powerUp();
 	rf_receiver.setReceiveMode();
 }
@@ -122,14 +128,22 @@ void process_rf_input() {
 /* Send to a sensor with name.
  * Sending format: [dest_address(1), src_address(1), data(30)]
  */
-void send_sensor(char *name, char *data) {
+void send_sensor_name(char *name, char *data) {
 	uint8_t id = find_id(name);
+	send_sensor(id, data);
+}
+/* Send to a sensor with an id. */
+void send_sensor(uint8_t id, char *data) {
 	send_buffer[0] = id;
 	send_buffer[1] = (uint8_t) 0;
 	send_buffer[2] = data;
+	uint64_t pipe_addr = (id << 8) & 1;
+	rf_receiver.setTxAddress(pipe_addr, paddr_size);
 	rf_receiver.write(NRF24L01P_PIPE_P0, send_buffer, RF24_TRANSFER_SIZE);
 }
-int8_t find_id(char *name) {
+
+/* Gets the id from the name of the sensor. */
+uint8_t find_id(char *name) {
 	uint8_t id = 0;
 	while (strcmp(sensor_names[id], name)) {
 		id += 1;
@@ -174,6 +188,7 @@ void speed_handler(char *data) {
 	unsigned int seqno = get_seqno(data);
 	if (seqno > speed_seqno) {
 		speed = get_speed(data); //should we update anything?
+		send_ack(1, speed_seqno, speed);
 	}
 }
 /* Cadence handler
@@ -181,18 +196,14 @@ void speed_handler(char *data) {
  * cadence is a double
  */
 unsigned int cadence_seqno = 0;
+char *cad_string;
 void cadence_handler(char *data) {
 	unsigned int seqno = get_seqno(data);
 	if (seqno > cadence_seqno) {
 		cadence = get_cadence(data);
+		cad_string[0] = cadence;
+		send_ack(2, cadence_seqno, cadence);
 	}
-}
-
-unsigned int get_seqno(char *data) {
-	uint8_t msb = (uint8_t) data[0];
-	uint8_t lsb = (uint8_t) data[1];
-	unsigned int seqno = msb * 255 + lsb;
-	return seqno;
 }
 
 /* Rear Light handler
@@ -210,4 +221,24 @@ void front_lights_handler(char *data) {
  * not sure what goes here yet. Probably messages like battery, change of status, etc
  */
 void shifter_handler(char *data) {
+}
+
+/* Gets the seqno from the data packet. */
+unsigned int get_seqno(char *data) {
+	uint8_t msb = (uint8_t) data[0];
+	uint8_t lsb = (uint8_t) data[1];
+	unsigned int seqno = msb * 255 + lsb;
+	return seqno;
+}
+
+
+/* Sends an ack to the relevant sensors. */
+void send_ack(int id, unsigned int seqno, char *data) {
+	uint8_t msb = (uint8_t) seqno >> 8;
+	uint8_t lsb = (uint8_t) seqno & 0x0F;
+	char *send_data = malloc(RF24_TRANSFER_SIZE - 2);
+	send_data[0] = msb;
+	send_data[1] = lsb;
+	send_data[2] = data;
+	send_sensor(id, send_data);
 }
