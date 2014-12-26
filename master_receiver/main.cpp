@@ -9,6 +9,7 @@
 #define XBEE_SEND_INTERVAL 2
 #define PC_SEND_INTERVAL 1
 #define paddr_size 5
+#define MY_ADDR 0
 
 //Serial spoke_sensor(p9, p10); //tx, rx
 DigitalOut led1(LED1);
@@ -172,6 +173,25 @@ void shift_up() {
 
 /* RF24 Handlers. They must all take in a char* parameter. */
 
+/* Gets the seqno from the data packet. */
+unsigned int get_seqno(char *data) {
+	uint8_t msb = (uint8_t) data[0];
+	uint8_t lsb = (uint8_t) data[1];
+	unsigned int seqno = msb * 255 + lsb;
+	return seqno;
+}
+
+/* Sends an ack to the relevant sensors. */
+void send_ack(int id, unsigned int seqno, char *data) {
+	uint8_t msb = (uint8_t) seqno >> 8;
+	uint8_t lsb = (uint8_t) seqno & 0x0F;
+	char *send_data = (char *) malloc(RF24_TRANSFER_SIZE - 2);
+	send_data[0] = msb;
+	send_data[1] = lsb;
+	sprintf(send_data + 2, "%s", data);
+	send_sensor(id, send_data);
+}
+
 /* The receiver's handler should never really do anything.
  * If the receiver gets a message from itself, something went wrong.
  */
@@ -179,30 +199,57 @@ void receiver_handler(char *data) {
 	led4 = 1; //We really shouldn't be doing anything. This is to warn us if this handler is ever triggered.
 }
 
+/* Get speed from data packet. */
+double gete_speed(char *data) {
+	double spd;
+	sscanf(data, "%lf", &spd);
+	return spd;
+}
+
 /* Speed handler
  * Receive data in the format [seqno(2), speed(8)]
  * speed is a double.
  */
 unsigned int speed_seqno = 0;
+char *spd_string = (char *) malloc(8);
 void speed_handler(char *data) {
 	unsigned int seqno = get_seqno(data);
 	if (seqno > speed_seqno) {
 		speed = get_speed(data); //should we update anything?
-		send_ack(1, speed_seqno, speed);
+		sprintf(spd_string, "%3.4f", speed);
+		send_ack(1, speed_seqno, spd_string);
+	} else if (seqno == 0) {
+		send_ack(1, 0, "ack");
+		if (speed_seqno > 0) {
+			send_ack(1, speed_seqno, spd_string);
+		}
 	}
 }
+
+/* Get cadence from data packet. */
+double get_cadence(char *data) {
+	double cad;
+	sscanf(data, "%lf", &cad);
+	return cad;
+}
+
 /* Cadence handler
  * Receive data in the format [seqno(2), cadence(8)]
  * cadence is a double
  */
 unsigned int cadence_seqno = 0;
-char *cad_string;
+char *cad_string = (char *) malloc(8);
 void cadence_handler(char *data) {
 	unsigned int seqno = get_seqno(data);
 	if (seqno > cadence_seqno) {
 		cadence = get_cadence(data);
-		cad_string[0] = cadence;
-		send_ack(2, cadence_seqno, cadence);
+		sprintf(cad_string, "%3.4f", cadence);
+		send_ack(2, cadence_seqno, cad_string);
+	} else if (seqno == 0) {
+		send_ack(2, 0, "ack");
+		if (cadence_seqno > 0) {
+			send_ack(2, cadence_seqno, cad_string);
+		}
 	}
 }
 
@@ -223,22 +270,3 @@ void front_lights_handler(char *data) {
 void shifter_handler(char *data) {
 }
 
-/* Gets the seqno from the data packet. */
-unsigned int get_seqno(char *data) {
-	uint8_t msb = (uint8_t) data[0];
-	uint8_t lsb = (uint8_t) data[1];
-	unsigned int seqno = msb * 255 + lsb;
-	return seqno;
-}
-
-
-/* Sends an ack to the relevant sensors. */
-void send_ack(int id, unsigned int seqno, char *data) {
-	uint8_t msb = (uint8_t) seqno >> 8;
-	uint8_t lsb = (uint8_t) seqno & 0x0F;
-	char *send_data = malloc(RF24_TRANSFER_SIZE - 2);
-	send_data[0] = msb;
-	send_data[1] = lsb;
-	send_data[2] = data;
-	send_sensor(id, send_data);
-}
