@@ -18,27 +18,25 @@ DigitalOut led3(LED3);
 DigitalOut led4(LED4);
 Serial pc(USBTX, USBRX); // tx, rx
 xbee xbee(p13, p14, p12);
-//Servo servo(p21);
-nRF24L01P rf_receiver(p5, p6, p7, p8, p9, p10);
+nRF24L01P rf24(p5, p6, p7, p8, p9, p10);
 
 Ticker events;
 Timeout timeout;
-void wheelspeed_interrupt();
-volatile int count = 0; //wheelspeed_interrupt increments this, reset to 0 after send_interval
 double speed = 0.0; //calculated speed
 double cadence = 0.0;
-int num_spokes = 24; //set to number of spokes on wheel, used for calculating speed
-double circumference = 0.00130239; // in miles for 700x23c wheel w/ tire
-double speed_per_spoke;
-float pos;
-float new_pos = 0.0;
-char speed_buffer[20];
-char *speed_buffer_val;
-double shift_vals[11];
 char receive_buffer[RF24_TRANSFER_SIZE];
 char send_buffer[RF24_TRANSFER_SIZE];
 char *sensor_names[255] = {0};
 void (*sensor_handlers[255])(char *data);
+
+/* RF24 Handlers. They must all take in a char* parameter. */
+void receiver_handler(char *data);
+void speed_handler(char *data);
+void cadence_handler(char *data);
+void rear_lights_handler(char *data);
+void front_lights_handler(char *data);
+void shifter_handler(char *data);
+
 /* Prints speed to terminal through a usb. */
 void show_usbterm_speed() {
 	pc.printf("speed: %f\n", speed);
@@ -50,19 +48,19 @@ void send_xbee_speed() {
 	sprintf(speed_buffer_val, "%f\n", speed);
 }
 
+/* Initialize xbee for telemetry. */
 void telemetry_init() {
 	// convert units before to minimize calculations in critical section
 	pc.printf("Initializing.\n");
-	speed_per_spoke = circumference * 3600 * 1000 / update_interval / num_spokes;
-	spoke_sensor.attach(&wheelspeed_interrupt, Serial::RxIrq);
-	sprintf(speed_buffer, "speed: ");
-	speed_buffer_val = speed_buffer + 7;
 }
 
-void shift_init() {
-	//shift_vals = {0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0};
-	servo.calibrate(0.001, 0.0);
+/* Initialize one sensor's values. */
+void init_sensor(int id, char *name, void *handler) {
+	sensor_names[id] = name;
+	sensor_handlers[id] = handler;
 }
+
+/* initialize all rf24 sensor data. */
 void rf24_init() {
 	init_sensor(0, "receiver", &receiver_handler);
 	init_sensor(1, "speed", &speed_handler);
@@ -70,50 +68,22 @@ void rf24_init() {
 	init_sensor(3, "rear_lights", &rear_lights_handler);
 	init_sensor(4, "front_lights", &front_lights_handler);
 	init_sensor(5, "shifter", &shifter_handler);
-	setRxAddress(0x0000000001, paddr_size, NRF24L01P_PIPE_P1);
-	setRxAddress(0x0000000002, paddr_size, NRF24L01P_PIPE_P2);
-	setRxAddress(0x0000000003, paddr_size, NRF24L01P_PIPE_P3);
-	setRxAddress(0x0000000004, paddr_size, NRF24L01P_PIPE_P4);
-	setRxAddress(0x0000000005, paddr_size, NRF24L01P_PIPE_P5);
-	rf_receiver.powerUp();
-	rf_receiver.setReceiveMode();
-}
-void init_sensor(int id, char *name, void *handler) {
-	sensor_names[id] = name;
-	sensor_handlers[id] = handler;
-}
-void init() {
-	spoke_sensor.baud(9600);
-	telemetry_init();
-	shift_init();
-	rf24_init();
-}
-/* Main sending loop. */
-int main() {
-	init();
-	int send_time_left = send_interval;
-	pc.printf("Starting Logging.\n");
-	events.attach(&send_xbee_speed, XBEE_SEND_INTERVAL);
-	events.attach(&show_usbterm_speed, PC_SEND_INTERVAL);
-	while(1) {
-		pos = servo.read();
-		servo.write(new_pos);
-		new_pos = new_pos + 0.5;
-		if (new_pos > 1.0) {
-			new_pos = 0.0;
-		}
-		pc.printf("count: %d\n", count);
-		while (rf_receiver.readable()) {
-			rf_receiver.read(NRF24L01P_PIPE_P0, receive_buffer, RF24_TRANSFER_SIZE);
-			process_rf_input();
-		}
-		/*NVIC_DisableIRQ(UART1_IRQn); // start critical section
-		speed = count * speed_per_spoke;
-		count = 0;
-		NVIC_EnableIRQ(UART1_IRQn); //end critical section*/
-	}
+	rf24.setRxAddress(0x0000000001, paddr_size, NRF24L01P_PIPE_P1);
+	rf24.setRxAddress(0x0000000002, paddr_size, NRF24L01P_PIPE_P2);
+	rf24.setRxAddress(0x0000000003, paddr_size, NRF24L01P_PIPE_P3);
+	rf24.setRxAddress(0x0000000004, paddr_size, NRF24L01P_PIPE_P4);
+	rf24.setRxAddress(0x0000000005, paddr_size, NRF24L01P_PIPE_P5);
+	rf24.powerUp();
+	rf24.setReceiveMode();
 }
 
+/* Initialize everything necessary for the scripts. */
+void init() {
+	telemetry_init();
+	rf24_init();
+}
+
+/* Process RF24 input and send it to the correct handler. */
 void process_rf_input() {
 	uint8_t dest_addr = (uint8_t) receive_buffer[0];
 	if (dest_addr == MY_ADDR) {
@@ -125,6 +95,20 @@ void process_rf_input() {
 		}
 	}
 }
+/* Main sending loop. */
+int main() {
+	init();
+	pc.printf("Starting Logging.\n");
+	events.attach(&send_xbee_speed, XBEE_SEND_INTERVAL);
+	events.attach(&show_usbterm_speed, PC_SEND_INTERVAL);
+	while(1) {
+		if (rf24.readable()) {
+			rf24.read(NRF24L01P_PIPE_P0, receive_buffer, RF24_TRANSFER_SIZE);
+			process_rf_input();
+		}
+	}
+}
+
 
 /* Send to a sensor with name.
  * Sending format: [dest_address(1), src_address(1), data(30)]
@@ -139,8 +123,8 @@ void send_sensor(uint8_t id, char *data) {
 	send_buffer[1] = (uint8_t) 0;
 	send_buffer[2] = data;
 	uint64_t pipe_addr = (id << 8) & 1;
-	rf_receiver.setTxAddress(pipe_addr, paddr_size);
-	rf_receiver.write(NRF24L01P_PIPE_P0, send_buffer, RF24_TRANSFER_SIZE);
+	rf24.setTxAddress(pipe_addr, paddr_size);
+	rf24.write(NRF24L01P_PIPE_P0, send_buffer, RF24_TRANSFER_SIZE);
 }
 
 /* Gets the id from the name of the sensor. */
@@ -151,25 +135,6 @@ uint8_t find_id(char *name) {
 	}
 	return id;
 }
-void reset_led2() {
-	led2 = 0;
-}
-/* Serial interrupt for light sensor
- * measures number of times light is interrupted by spoke to calculate wheelspeed.
- */
-void wheelspeed_interrupt() {
-	led2 = 1;
-	spoke_sensor.getc();
-	count ++;
-	timeout.attach(&reset_led2, 1);
-	return;
-}
-
-/* Serial interrupt for shift up. */
-void shift_up() {
-	led2 = 1;
-	timeout.attach(&reset_led2, 1);
-}	
 
 /* RF24 Handlers. They must all take in a char* parameter. */
 
@@ -200,7 +165,7 @@ void receiver_handler(char *data) {
 }
 
 /* Get speed from data packet. */
-double gete_speed(char *data) {
+double get_speed(char *data) {
 	double spd;
 	sscanf(data, "%lf", &spd);
 	return spd;
