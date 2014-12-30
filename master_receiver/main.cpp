@@ -25,6 +25,7 @@ Timeout timeout;
 double speed = 0.0; //calculated speed
 double cadence = 0.0;
 char receive_buffer[RF24_TRANSFER_SIZE];
+char speed_buffer[RF24_TRANSFER_SIZE];
 char send_buffer[RF24_TRANSFER_SIZE];
 char *sensor_names[255] = {0};
 void (*sensor_handlers[255])(char *data);
@@ -40,12 +41,11 @@ void shifter_handler(char *data);
 /* Prints speed to terminal through a usb. */
 void show_usbterm_speed() {
 	pc.printf("speed: %f\n", speed);
-	pc.printf("servo position: %f\n", pos);
 }
 
 /* Sends speed to XBEE. */
 void send_xbee_speed() {
-	sprintf(speed_buffer_val, "%f\n", speed);
+	sprintf(speed_buffer, "%f\n", speed);
 }
 
 /* Initialize xbee for telemetry. */
@@ -55,7 +55,7 @@ void telemetry_init() {
 }
 
 /* Initialize one sensor's values. */
-void init_sensor(int id, char *name, void *handler) {
+void init_sensor(int id, char *name, void (*handler)(char *)) {
 	sensor_names[id] = name;
 	sensor_handlers[id] = handler;
 }
@@ -87,14 +87,13 @@ void init() {
 void process_rf_input() {
 	uint8_t dest_addr = (uint8_t) receive_buffer[0];
 	if (dest_addr == MY_ADDR) {
-		void *handler;
 		uint8_t src_addr = (uint8_t) receive_buffer[1];
-		handler = sensor_handlers[src_addr];
-		if (handler){
-			handler(receive_buffer[2]);
+		if (sensor_handlers[src_addr]){
+			sensor_handlers[src_addr](receive_buffer + 2);
 		}
 	}
 }
+
 /* Main sending loop. */
 int main() {
 	init();
@@ -109,24 +108,6 @@ int main() {
 	}
 }
 
-
-/* Send to a sensor with name.
- * Sending format: [dest_address(1), src_address(1), data(30)]
- */
-void send_sensor_name(char *name, char *data) {
-	uint8_t id = find_id(name);
-	send_sensor(id, data);
-}
-/* Send to a sensor with an id. */
-void send_sensor(uint8_t id, char *data) {
-	send_buffer[0] = id;
-	send_buffer[1] = (uint8_t) 0;
-	send_buffer[2] = data;
-	uint64_t pipe_addr = (id << 8) & 1;
-	rf24.setTxAddress(pipe_addr, paddr_size);
-	rf24.write(NRF24L01P_PIPE_P0, send_buffer, RF24_TRANSFER_SIZE);
-}
-
 /* Gets the id from the name of the sensor. */
 uint8_t find_id(char *name) {
 	uint8_t id = 0;
@@ -134,6 +115,24 @@ uint8_t find_id(char *name) {
 		id += 1;
 	}
 	return id;
+}
+
+/* Send to a sensor with an id. */
+void send_sensor(uint8_t id, char *data) {
+	send_buffer[0] = id;
+	send_buffer[1] = (uint8_t) 0;
+	sprintf(send_buffer + 2, "%s", data);
+	uint64_t pipe_addr = (id << 8) & 1;
+	rf24.setTxAddress(pipe_addr, paddr_size);
+	rf24.write(NRF24L01P_PIPE_P0, send_buffer, RF24_TRANSFER_SIZE);
+}
+
+/* Send to a sensor with name.
+ * Sending format: [dest_address(1), src_address(1), data(30)]
+ */
+void send_sensor_name(char *name, char *data) {
+	uint8_t id = find_id(name);
+	send_sensor(id, data);
 }
 
 /* RF24 Handlers. They must all take in a char* parameter. */
