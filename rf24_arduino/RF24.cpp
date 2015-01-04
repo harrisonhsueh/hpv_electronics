@@ -10,6 +10,7 @@
 #include "RF24_config.h"
 #include "RF24.h"
 
+char * serial_msg[50];
 /****************************************************************************/
 
 void RF24::csn(int mode)
@@ -103,13 +104,15 @@ uint8_t RF24::write_payload(const void* buf, uint8_t len)
 
   uint8_t data_len = min(len,payload_size);
   uint8_t blank_len = dynamic_payloads_enabled ? 0 : payload_size - data_len;
-  
-  //printf("[Writing %u bytes %u blanks]",data_len,blank_len);
+  Serial.begin(9600);
+  sprintf(serial_msg, "[Writing %u bytes %u blanks]",data_len,blank_len);
+	Serial.println(serial_msg);
   
   csn(LOW);
   status = SPI.transfer( W_TX_PAYLOAD );
-  while ( data_len-- )
+  while ( data_len-- ) {
     SPI.transfer(*current++);
+	}
   while ( blank_len-- )
     SPI.transfer(0);
   csn(HIGH);
