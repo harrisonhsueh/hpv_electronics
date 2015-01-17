@@ -12,7 +12,6 @@ void setup() {
   rf24.begin();
   connect_master();
 	
-	
 }
 
 char *name = "speed";

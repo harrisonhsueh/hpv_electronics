@@ -3,11 +3,10 @@
 #include <stdio.h>
 #include "xbee.h"
 #include "nRF24L01P.h"
+#include "../constants.h"
 
-#define RF24_TRANSFER_SIZE 32
 #define XBEE_SEND_INTERVAL 2
 #define PC_SEND_INTERVAL 1
-#define paddr_size 5
 #define MY_ADDR 0
 
 //Serial spoke_sensor(p9, p10); //tx, rx
@@ -26,9 +25,9 @@ double cadence = 0.0;
 char receive_buffer[RF24_TRANSFER_SIZE];
 char speed_buffer[RF24_TRANSFER_SIZE];
 char send_buffer[RF24_TRANSFER_SIZE];
-char *sensor_names[255] = {0};
+const char *sensor_names[255] = {0};
 void (*sensor_handlers[255])(char *data);
-char sensor_states[255] = {0};
+char sensor_states[255] = {DISCONNECTED};
 
 /* RF24 Handlers. They must all take in a char* parameter. */
 void receiver_handler(char *data);
@@ -55,7 +54,7 @@ void telemetry_init() {
 }
 
 /* Initialize one sensor's values. */
-void init_sensor(int id, char *name, void (*handler)(char *)) {
+void init_sensor(int id, const char *name, void (*handler)(char *)) {
 	sensor_names[id] = name;
 	sensor_handlers[id] = handler;
 	sensor_states[id] = 0;
@@ -64,11 +63,11 @@ void init_sensor(int id, char *name, void (*handler)(char *)) {
 /* initialize all rf24 sensor data. */
 void rf24_init() {
 	pc.printf("rf24 init\r\n");
-	 pc.printf( "nRF24L01+ Frequency    : %d MHz\r\n",  rf24.getRfFrequency() );
-    pc.printf( "nRF24L01+ Output power : %d dBm\r\n",  rf24.getRfOutputPower() );
-    pc.printf( "nRF24L01+ Data Rate    : %d kbps\r\n", rf24.getAirDataRate() );
-    pc.printf( "nRF24L01+ TX Address   : 0x%010llX\r\n", rf24.getTxAddress() );
-    pc.printf( "nRF24L01+ RX Address   : 0x%010llX\r\n", rf24.getRxAddress() );
+	pc.printf( "nRF24L01+ Frequency    : %d MHz\r\n",  rf24.getRfFrequency() );
+	pc.printf( "nRF24L01+ Output power : %d dBm\r\n",  rf24.getRfOutputPower() );
+	pc.printf( "nRF24L01+ Data Rate    : %d kbps\r\n", rf24.getAirDataRate() );
+	pc.printf( "nRF24L01+ TX Address   : 0x%010llX\r\n", rf24.getTxAddress() );
+	pc.printf( "nRF24L01+ RX Address   : 0x%010llX\r\n", rf24.getRxAddress() );
 	init_sensor(0, "receiver", &receiver_handler);
 	init_sensor(1, "speed", &speed_handler);
 	init_sensor(2, "cadence", &cadence_handler);
@@ -76,47 +75,53 @@ void rf24_init() {
 	init_sensor(4, "front_lights", &front_lights_handler);
 	init_sensor(5, "shifter", &shifter_handler);
 	rf24.powerUp();
+	rf24.setRfFrequency(2501);
+	rf24.setTransferSize(RF24_TRANSFER_SIZE);
+	rf24.setCrcWidth(8);
+	rf24.enableAutoAcknowledge(NRF24L01P_PIPE_P1);
+	rf24.enableAutoAcknowledge(NRF24L01P_PIPE_P1);
+	rf24.enableAutoAcknowledge(NRF24L01P_PIPE_P2);
+	rf24.enableAutoAcknowledge(NRF24L01P_PIPE_P3);
+	rf24.enableAutoAcknowledge(NRF24L01P_PIPE_P4);
+	rf24.enableAutoAcknowledge(NRF24L01P_PIPE_P5);
 	rf24.setRxAddress(0x0000000001, paddr_size, NRF24L01P_PIPE_P1);
 	rf24.setRxAddress(0x0000000002, paddr_size, NRF24L01P_PIPE_P2);
 	rf24.setRxAddress(0x0000000003, paddr_size, NRF24L01P_PIPE_P3);
 	rf24.setRxAddress(0x0000000004, paddr_size, NRF24L01P_PIPE_P4);
 	rf24.setRxAddress(0x0000000005, paddr_size, NRF24L01P_PIPE_P5);
-  pc.printf( "nRF24L01+ RX Address P1  : 0x%010llX\r\n", rf24.getRxAddress(NRF24L01P_PIPE_P1));
-	rf24.setTransferSize(RF24_TRANSFER_SIZE);
+	//rf24.setTxAddress(0xF0F0F0F0D2);
+	pc.printf( "nRF24L01+ RX Address P1  : 0x%010llX\r\n", rf24.getRxAddress(NRF24L01P_PIPE_P1));
 	rf24.setReceiveMode();
 	rf24.enable();
-	pc.printf("rf24 init finished\r\n");
+	pc.printf("MASTER: rf24 init finished\r\n");
 }
 
 /* Initialize everything necessary for the scripts. */
 void init() {
 	pc.printf("init");
-
 	telemetry_init();
 	rf24_init();
 }
 
 /* Send to a sensor with an id. */
-void send_sensor(uint8_t id, char *data) {
+bool send_sensor(uint8_t id, char *data) {
 	send_buffer[0] = id;
-	send_buffer[1] = (uint8_t) 0;
-	sprintf(send_buffer + 2, "%s", data);
+	sprintf(send_buffer + 1, "%s", data);
 	uint64_t pipe_addr = (id << 8) & 1;
 	rf24.setTxAddress(pipe_addr, paddr_size);
-	rf24.write(NRF24L01P_PIPE_P0, send_buffer, RF24_TRANSFER_SIZE);
+	bool received = false;
+	for (int i = 0; i < 10 && !received; i++) {
+		received = rf24.write(NRF24L01P_PIPE_P0, send_buffer, RF24_TRANSFER_SIZE);
+	}
+	return received;
 }
 /* Process a connection. */
 void process_connection() {
-	uint8_t dest_addr = (uint8_t) receive_buffer[0];
-	if (dest_addr == MY_ADDR) {
-		led2 = 1;
-		uint8_t src_addr = (uint8_t) receive_buffer[1];
-		if (sensor_states[src_addr] == 0) {
-			if (strstr(receive_buffer + 2, "connect") == receive_buffer + 2) {
-				led4 = 1;
-				sensor_states[src_addr] == 1;
-				send_sensor(src_addr, receive_buffer + 2);
-			}
+	uint8_t src_addr = (uint8_t) receive_buffer[0];
+	if (sensor_states[src_addr] == DISCONNECTED) {
+		if (strstr(receive_buffer + 1, "connect") == (receive_buffer + 1)) {
+			led4 = 1;
+			sensor_states[src_addr] = CONNECTED;
 		}
 	}
 }
@@ -141,12 +146,26 @@ int main() {
 	while(1) {
 		if (rf24.readable(NRF24L01P_PIPE_P1)) {
 			led1 = 1;
-			pc.printf("rf24 reading. \n");
+			pc.printf("rf24 connection.\r\n");
 			rf24.read(NRF24L01P_PIPE_P1, receive_buffer, RF24_TRANSFER_SIZE);
+			pc.printf(receive_buffer);
+			pc.printf("\r\n");
 			process_connection();
 		} else if (rf24.readable(NRF24L01P_PIPE_P2)) {
 			led1 = 1;
 			rf24.read(NRF24L01P_PIPE_P2, receive_buffer, RF24_TRANSFER_SIZE);
+			process_rf_input();
+		} else if (rf24.readable(NRF24L01P_PIPE_P3)) {
+			led1 = 1;
+			rf24.read(NRF24L01P_PIPE_P3, receive_buffer, RF24_TRANSFER_SIZE);
+			process_rf_input();
+		} else if (rf24.readable(NRF24L01P_PIPE_P4)) {
+			led1 = 1;
+			rf24.read(NRF24L01P_PIPE_P4, receive_buffer, RF24_TRANSFER_SIZE);
+			process_rf_input();
+		} else if (rf24.readable(NRF24L01P_PIPE_P5)) {
+			led1 = 1;
+			rf24.read(NRF24L01P_PIPE_P5, receive_buffer, RF24_TRANSFER_SIZE);
 			process_rf_input();
 		}
 	}
@@ -218,7 +237,7 @@ void speed_handler(char *data) {
 		sprintf(spd_string, "%3.4f", speed);
 		send_ack(1, speed_seqno, spd_string);
 	} else if (seqno == 0) {
-		send_ack(1, 0, "ack");
+		send_ack(1, 0, (char *) "ack");
 		if (speed_seqno > 0) {
 			send_ack(1, speed_seqno, spd_string);
 		}
@@ -245,7 +264,7 @@ void cadence_handler(char *data) {
 		sprintf(cad_string, "%3.4f", cadence);
 		send_ack(2, cadence_seqno, cad_string);
 	} else if (seqno == 0) {
-		send_ack(2, 0, "ack");
+		send_ack(2, 0, (char *) "ack");
 		if (cadence_seqno > 0) {
 			send_ack(2, cadence_seqno, cad_string);
 		}
