@@ -9,7 +9,6 @@
 #define PC_SEND_INTERVAL 1
 #define MY_ADDR 0
 
-//Serial spoke_sensor(p9, p10); //tx, rx
 DigitalOut led1(LED1);
 DigitalOut led2(LED2);
 DigitalOut led3(LED3);
@@ -89,8 +88,6 @@ void rf24_init() {
 	rf24.setRxAddress(0x0000000003, paddr_size, NRF24L01P_PIPE_P3);
 	rf24.setRxAddress(0x0000000004, paddr_size, NRF24L01P_PIPE_P4);
 	rf24.setRxAddress(0x0000000005, paddr_size, NRF24L01P_PIPE_P5);
-	//rf24.setTxAddress(0xF0F0F0F0D2);
-	pc.printf( "nRF24L01+ RX Address P1  : 0x%010llX\r\n", rf24.getRxAddress(NRF24L01P_PIPE_P1));
 	rf24.setReceiveMode();
 	rf24.enable();
 	pc.printf("MASTER: rf24 init finished\r\n");
